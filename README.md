@@ -1,6 +1,3 @@
-
-
-```markdown
 # Franz Swarm
 
 Autonomous computer-control agent system for Windows 11. Pure Python 3.13, stdlib only, zero pip dependencies.
@@ -490,4 +487,3 @@ important (degrades reliability), minor (code quality).
 4. Run any brain script.
 
 Steps 2 and 3 can happen in any order. Step 3 can be skipped (requests timeout with 504 until Chrome is opened). Step 3 can be repeated at any time (close tab, reopen, pipeline resumes). Step 4 can run multiple brain scripts simultaneously.
-```
