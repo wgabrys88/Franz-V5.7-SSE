@@ -162,6 +162,20 @@ def _process_content_parts(
     return overlays, raw_b64, request_text
 
 
+def _has_forwardable_content(messages: list[Any]) -> bool:
+    for msg in messages:
+        content: Any = msg.get("content", "")
+        if isinstance(content, str) and content.strip():
+            return True
+        if isinstance(content, list):
+            for part in content:
+                if part.get("type") == "image_url":
+                    return True
+                if part.get("type") == "text" and part.get("text", "").strip():
+                    return True
+    return False
+
+
 def _process_response_actions(
     resp_obj: dict[str, Any], region: str
 ) -> tuple[list[dict[str, Any]], str]:
@@ -355,6 +369,27 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
             t_req: float = time.time()
             _logger.debug({"event": "vlm_request", "ts": t_req, "model": req_body.get("model", ""), "agent": agent, "overlays": len(overlays), "request_id": rid})
 
+            for recipient in recipients:
+                _agent_sse_push(recipient, "routed_request", {
+                    "from_agent": agent,
+                    "request_id": rid,
+                    "request_text": request_text,
+                    "model": req_body.get("model", ""),
+                })
+
+            if not _has_forwardable_content(messages):
+                _logger.debug({"event": "vlm_skipped_no_content", "ts": time.time(), "agent": agent, "request_id": rid})
+                _sse_push("vlm_done", {"request_id": rid, "text": "(action-only)", "annotated_b64": "", "agent": agent, "model": req_body.get("model", "")})
+                for recipient in recipients:
+                    _agent_sse_push(recipient, "routed_response", {
+                        "from_agent": agent,
+                        "request_id": rid,
+                        "text": "(action-only)",
+                        "model": req_body.get("model", ""),
+                    })
+                self._json(200, {"choices": [{"message": {"content": "(action-only)"}}]})
+                return
+
             annotated_b64: str | None = _annotate_via_chrome(rid, raw_b64, overlays, req_body.get("model", ""), agent, request_text)
 
             if annotated_b64 is None:
@@ -369,14 +404,6 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
                     for part in content:
                         if part.get("type") == "image_url":
                             part["image_url"]["url"] = f"data:image/png;base64,{annotated_b64}"
-
-            for recipient in recipients:
-                _agent_sse_push(recipient, "routed_request", {
-                    "from_agent": agent,
-                    "request_id": rid,
-                    "request_text": request_text,
-                    "model": req_body.get("model", ""),
-                })
 
             fwd_body: bytes = json.dumps(req_body).encode()
             fwd_req: urllib.request.Request = urllib.request.Request(
@@ -455,6 +482,7 @@ class PanelHandler(http.server.BaseHTTPRequestHandler):
 
 def start(host: str = CFG.host, port: int = CFG.port) -> http.server.ThreadingHTTPServer:
     server: http.server.ThreadingHTTPServer = http.server.ThreadingHTTPServer((host, port), PanelHandler)
+    server.handle_error = lambda *_: None
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
